@@ -28,6 +28,7 @@ function App() {
   const [gameState, setGameState] = React.useState<GameStatePayload | null>(null);
   const [isHost, setIsHost] = React.useState(false);
   const [connecting, setConnecting] = React.useState(false);
+  const [connectionNonce, setConnectionNonce] = React.useState(0);
 
   React.useEffect(() => {
     const socket = io(`${wsBaseUrl}${SocketNamespaces.game}`);
@@ -91,7 +92,7 @@ function App() {
     return () => {
       socket.disconnect();
     };
-  }, []);
+  }, [connectionNonce]);
 
   const canSubmitName = nickname.trim().length >= 2;
 
@@ -215,6 +216,9 @@ function App() {
             setGameState(null);
             setScreen('home');
             setIsHost(false);
+            setStatus('Connecting...');
+            setError('');
+            setConnectionNonce((nonce) => nonce + 1);
           }}
         >
           Leave Lobby
