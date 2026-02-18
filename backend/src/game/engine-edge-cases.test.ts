@@ -158,10 +158,10 @@ test('advancePhase rejects auto-advance in team_proposal and endgame phases', ()
 });
 
 test('advancePhase returns input for unknown phase values', () => {
-  const game = createGame({ id: 'host-1', name: 'Host' }) as GameState & { phase: string };
-  game.phase = 'mystery';
+  const game = createGame({ id: 'host-1', name: 'Host' });
+  const unknownPhaseGame = { ...game, phase: 'mystery' } as unknown as GameState;
 
-  const result = advancePhase(game as unknown as GameState);
+  const result = advancePhase(unknownPhaseGame);
   assert.equal(result.phase, 'mystery');
 });
 
