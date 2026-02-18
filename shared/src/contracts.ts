@@ -137,15 +137,22 @@ export const RejoinGameResponseSchema = z.object({
 });
 
 export const TeamProposedSchema = z.object({
-  teamPlayerIds: z.array(z.string()).min(1)
+  teamPlayerIds: z.array(z.string()).min(1),
+  actionId: z.string().uuid().optional()
 });
 
 export const VoteSubmittedSchema = z.object({
-  vote: VoteChoiceSchema
+  vote: VoteChoiceSchema,
+  actionId: z.string().uuid().optional()
 });
 
 export const QuestSubmittedSchema = z.object({
-  action: QuestActionSchema
+  action: QuestActionSchema,
+  actionId: z.string().uuid().optional()
+});
+
+export const PhaseAdvanceRequestSchema = z.object({
+  actionId: z.string().uuid().optional()
 });
 
 export const PhaseChangedSchema = z.object({
@@ -190,6 +197,7 @@ export type RejoinGameResponse = z.infer<typeof RejoinGameResponseSchema>;
 export type TeamProposedPayload = z.infer<typeof TeamProposedSchema>;
 export type VoteSubmittedPayload = z.infer<typeof VoteSubmittedSchema>;
 export type QuestSubmittedPayload = z.infer<typeof QuestSubmittedSchema>;
+export type PhaseAdvanceRequestPayload = z.infer<typeof PhaseAdvanceRequestSchema>;
 export type PhaseChangedPayload = z.infer<typeof PhaseChangedSchema>;
 export type GameEndedPayload = z.infer<typeof GameEndedSchema>;
 export type GameErrorPayload = z.infer<typeof GameErrorSchema>;
