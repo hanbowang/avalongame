@@ -6,8 +6,8 @@ import {
   CreateGameResponse,
   GameErrorPayload,
   GameEvents,
+  GameStatePayload,
   JoinGameResponse,
-  LobbyStatePayload,
   RejoinGameResponse,
   SocketNamespaces
 } from '@avalon/shared';
@@ -25,7 +25,7 @@ function App() {
   const [joinCode, setJoinCode] = React.useState('');
   const [status, setStatus] = React.useState('Connecting...');
   const [error, setError] = React.useState('');
-  const [lobby, setLobby] = React.useState<LobbyStatePayload | null>(null);
+  const [gameState, setGameState] = React.useState<GameStatePayload | null>(null);
   const [isHost, setIsHost] = React.useState(false);
   const [connecting, setConnecting] = React.useState(false);
 
@@ -41,8 +41,8 @@ function App() {
       }
     });
 
-    socket.on(GameEvents.lobbyState, (payload: LobbyStatePayload) => {
-      setLobby(payload);
+    socket.on(GameEvents.gameState, (payload: GameStatePayload) => {
+      setGameState(payload);
       setScreen('lobby');
       setConnecting(false);
       setError('');
@@ -51,7 +51,7 @@ function App() {
     socket.on(GameEvents.createGameResponse, (payload: CreateGameResponse) => {
       window.localStorage.setItem(SESSION_KEY, payload.session.sessionToken);
       setIsHost(payload.session.isHost);
-      setLobby(payload.lobby);
+      setGameState(null);
       setScreen('lobby');
       setConnecting(false);
       setError('');
@@ -61,7 +61,7 @@ function App() {
     socket.on(GameEvents.joinGameResponse, (payload: JoinGameResponse) => {
       window.localStorage.setItem(SESSION_KEY, payload.session.sessionToken);
       setIsHost(payload.session.isHost);
-      setLobby(payload.lobby);
+      setGameState(null);
       setScreen('lobby');
       setConnecting(false);
       setError('');
@@ -71,7 +71,7 @@ function App() {
     socket.on(GameEvents.rejoinResponse, (payload: RejoinGameResponse) => {
       window.localStorage.setItem(SESSION_KEY, payload.session.sessionToken);
       setIsHost(payload.session.isHost);
-      setLobby(payload.lobby);
+      setGameState(null);
       setScreen('lobby');
       setConnecting(false);
       setError('');
@@ -186,15 +186,16 @@ function App() {
     <section className="card stack-lg">
       <div className="lobby-header">
         <h1>Lobby</h1>
-        <span className="chip">Code: {lobby?.joinCode ?? '----'}</span>
+        <span className="chip">Code: {gameState?.joinCode ?? '----'}</span>
       </div>
       <p className="subtle">Share code with friends and wait for everyone to connect.</p>
       <div className="chip-row">
-        <span className="chip chip-highlight">{lobby?.players.length ?? 0} players</span>
+        <span className="chip chip-highlight">{gameState?.players.length ?? 0} players</span>
         <span className="chip">{isHost ? 'Host controls enabled' : 'Waiting for host'}</span>
+        <span className="chip">Phase: {gameState?.phase ?? 'unknown'}</span>
       </div>
       <ul className="player-list">
-        {(lobby?.players ?? []).map((player) => (
+        {(gameState?.players ?? []).map((player) => (
           <li key={player.id}>
             <span>{player.name}</span>
             <span className={`chip ${player.connected ? 'chip-good' : 'chip-bad'}`}>
@@ -211,7 +212,7 @@ function App() {
           className="btn"
           onClick={() => {
             window.localStorage.removeItem(SESSION_KEY);
-            setLobby(null);
+            setGameState(null);
             setScreen('home');
             setIsHost(false);
           }}

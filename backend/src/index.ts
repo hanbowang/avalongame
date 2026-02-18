@@ -7,25 +7,35 @@ import {
   ConnectionAckSchema,
   CreateGameRequestSchema,
   CreateGameResponseSchema,
+  GameEndedSchema,
   GameErrorSchema,
   GameEvents,
   GamePingSchema,
   GamePongSchema,
+  GameStateSchema,
   JoinCodeSchema,
   JoinGameRequestSchema,
   JoinGameResponseSchema,
   LobbyStateSchema,
+  PhaseChangedSchema,
+  QuestSubmittedSchema,
   RejoinGameRequestSchema,
   RejoinGameResponseSchema,
-  SocketNamespaces
+  SocketNamespaces,
+  TeamProposedSchema,
+  VoteSubmittedSchema
 } from '@avalon/shared';
 import { config } from './config.js';
 import { InMemoryGameRepository } from './game/memoryRepository.js';
 import {
+  advancePhase as advancePhaseWithRepository,
   createGame as createGameWithRepository,
-  joinGame as joinGameWithRepository
+  joinGame as joinGameWithRepository,
+  proposeTeam as proposeTeamWithRepository,
+  submitQuestAction as submitQuestActionWithRepository,
+  submitVote as submitVoteWithRepository
 } from './game/service.js';
-import type { GameState } from './game/types.js';
+import type { GameState, QuestAction, VoteChoice } from './game/types.js';
 
 interface SessionRecord {
   token: string;
@@ -58,12 +68,22 @@ const createJoinCode = (): string => {
   throw new Error('Unable to create unique join code');
 };
 
+const roomForJoinCode = (joinCode: string) => `game:${joinCode}`;
+
 const getGameOrThrow = (gameId: string): GameState => {
   const game = repository.getById(gameId);
   if (!game) {
     throw new Error('Game not found');
   }
   return game;
+};
+
+const getJoinCodeOrThrow = (gameId: string): string => {
+  const joinCode = gameIdToJoinCode.get(gameId);
+  if (!joinCode) {
+    throw new Error('Join code not found');
+  }
+  return joinCode;
 };
 
 const setPlayerConnected = (gameId: string, playerId: string, connected: boolean): GameState => {
@@ -86,10 +106,7 @@ const setPlayerConnected = (gameId: string, playerId: string, connected: boolean
 };
 
 const toLobbyState = (game: GameState) => {
-  const joinCode = gameIdToJoinCode.get(game.id);
-  if (!joinCode) {
-    throw new Error('Join code not found');
-  }
+  const joinCode = getJoinCodeOrThrow(game.id);
 
   return LobbyStateSchema.parse({
     gameId: game.id,
@@ -107,9 +124,51 @@ const toLobbyState = (game: GameState) => {
   });
 };
 
+const toGameStateSnapshot = (game: GameState) => {
+  const joinCode = getJoinCodeOrThrow(game.id);
+
+  return GameStateSchema.parse({
+    id: game.id,
+    phase: game.phase,
+    hostId: game.hostId,
+    round: game.round,
+    turn: game.turn,
+    leaderSeat: game.leaderSeat,
+    proposedTeam: game.proposedTeam,
+    votes: game.votes,
+    questActions: game.questActions,
+    voteWindowEndsAt: game.voteWindowEndsAt,
+    questWindowEndsAt: game.questWindowEndsAt,
+    failedProposalCount: game.failedProposalCount,
+    questResults: game.questResults,
+    winner: game.winner,
+    createdAt: game.createdAt,
+    updatedAt: game.updatedAt,
+    joinCode,
+    players: game.players.map((player) => ({
+      id: player.id,
+      name: player.name,
+      seat: player.seat,
+      connected: player.connected
+    }))
+  });
+};
+
+const broadcastGameState = (gameId: string, io: Server) => {
+  const game = getGameOrThrow(gameId);
+  const joinCode = getJoinCodeOrThrow(gameId);
+  io.of(SocketNamespaces.game).to(roomForJoinCode(joinCode)).emit(GameEvents.gameState, toGameStateSnapshot(game));
+};
+
 const broadcastLobbyState = (gameId: string, io: Server) => {
   const game = getGameOrThrow(gameId);
-  io.of(SocketNamespaces.game).to(gameId).emit(GameEvents.lobbyState, toLobbyState(game));
+  const joinCode = getJoinCodeOrThrow(gameId);
+  io.of(SocketNamespaces.game).to(roomForJoinCode(joinCode)).emit(GameEvents.lobbyState, toLobbyState(game));
+};
+
+const emitRoomEvent = (gameId: string, event: string, payload: unknown, io: Server) => {
+  const joinCode = getJoinCodeOrThrow(gameId);
+  io.of(SocketNamespaces.game).to(roomForJoinCode(joinCode)).emit(event, payload);
 };
 
 const createSession = (gameId: string, joinCode: string, playerId: string): SessionRecord => {
@@ -244,9 +303,26 @@ const io = new Server(httpServer, {
 
 const gameNamespace = io.of(SocketNamespaces.game);
 
-const emitSocketError = (socket: Parameters<Parameters<typeof gameNamespace.on>[1]>[0], message: string) => {
+type GameSocket = Parameters<Parameters<typeof gameNamespace.on>[1]>[0];
+
+const emitSocketError = (socket: GameSocket, message: string) => {
   socket.emit(GameEvents.error, GameErrorSchema.parse({ message }));
 };
+
+const getSessionFromSocket = (socket: GameSocket): SessionRecord => {
+  const sessionToken = socketToSession.get(socket.id);
+  if (!sessionToken) {
+    throw new Error('No active session for socket');
+  }
+
+  const session = sessions.get(sessionToken);
+  if (!session) {
+    throw new Error('Session not found');
+  }
+
+  return session;
+};
+
 
 gameNamespace.on('connection', (socket) => {
   const ackPayload = ConnectionAckSchema.parse({
@@ -268,10 +344,13 @@ gameNamespace.on('connection', (socket) => {
     try {
       const request = CreateGameRequestSchema.parse(payload);
       const response = executeCreateGame(request.name);
-      socket.join(response.lobby.gameId);
+      const room = roomForJoinCode(response.lobby.joinCode);
+      socket.join(room);
       socketToSession.set(socket.id, response.session.sessionToken);
       socket.emit(GameEvents.createGameResponse, response);
+      emitRoomEvent(response.lobby.gameId, GameEvents.playerJoined, { playerId: response.session.playerId }, io);
       broadcastLobbyState(response.lobby.gameId, io);
+      broadcastGameState(response.lobby.gameId, io);
     } catch (error) {
       emitSocketError(socket, error instanceof Error ? error.message : 'Unable to create game');
     }
@@ -281,10 +360,13 @@ gameNamespace.on('connection', (socket) => {
     try {
       const request = JoinGameRequestSchema.parse(payload);
       const response = executeJoinGame(request.joinCode, request.name);
-      socket.join(response.lobby.gameId);
+      const room = roomForJoinCode(response.lobby.joinCode);
+      socket.join(room);
       socketToSession.set(socket.id, response.session.sessionToken);
       socket.emit(GameEvents.joinGameResponse, response);
+      emitRoomEvent(response.lobby.gameId, GameEvents.playerJoined, { playerId: response.session.playerId }, io);
       broadcastLobbyState(response.lobby.gameId, io);
+      broadcastGameState(response.lobby.gameId, io);
     } catch (error) {
       emitSocketError(socket, error instanceof Error ? error.message : 'Unable to join game');
     }
@@ -294,12 +376,148 @@ gameNamespace.on('connection', (socket) => {
     try {
       const request = RejoinGameRequestSchema.parse(payload);
       const response = executeRejoin(request.sessionToken);
-      socket.join(response.lobby.gameId);
+      const room = roomForJoinCode(response.lobby.joinCode);
+      socket.join(room);
       socketToSession.set(socket.id, response.session.sessionToken);
       socket.emit(GameEvents.rejoinResponse, response);
+      emitRoomEvent(
+        response.lobby.gameId,
+        GameEvents.playerReconnected,
+        { playerId: response.session.playerId },
+        io
+      );
       broadcastLobbyState(response.lobby.gameId, io);
+      broadcastGameState(response.lobby.gameId, io);
     } catch (error) {
       emitSocketError(socket, error instanceof Error ? error.message : 'Unable to rejoin game');
+    }
+  });
+
+  socket.on(GameEvents.teamProposed, (payload: unknown) => {
+    try {
+      const request = TeamProposedSchema.parse(payload);
+      const session = getSessionFromSocket(socket);
+      const nextState = proposeTeamWithRepository(
+        session.gameId,
+        {
+          leaderId: session.playerId,
+          teamPlayerIds: request.teamPlayerIds
+        },
+        repository
+      );
+      emitRoomEvent(session.gameId, GameEvents.teamProposed, request, io);
+      emitRoomEvent(session.gameId, GameEvents.phaseChanged, PhaseChangedSchema.parse({ phase: nextState.phase }), io);
+      broadcastGameState(session.gameId, io);
+    } catch (error) {
+      emitSocketError(socket, error instanceof Error ? error.message : 'Unable to propose team');
+    }
+  });
+
+  socket.on(GameEvents.voteSubmitted, (payload: unknown) => {
+    try {
+      const request = VoteSubmittedSchema.parse(payload);
+      const session = getSessionFromSocket(socket);
+      let nextState = submitVoteWithRepository(
+        session.gameId,
+        {
+          playerId: session.playerId,
+          vote: request.vote as VoteChoice
+        },
+        repository
+      );
+
+      emitRoomEvent(session.gameId, GameEvents.voteSubmitted, { playerId: session.playerId }, io);
+
+      if (Object.keys(nextState.votes).length === nextState.players.length) {
+        const prevPhase = nextState.phase;
+        nextState = advancePhaseWithRepository(session.gameId, repository);
+        emitRoomEvent(
+          session.gameId,
+          GameEvents.phaseChanged,
+          PhaseChangedSchema.parse({ phase: nextState.phase }),
+          io
+        );
+        if (prevPhase !== nextState.phase && nextState.phase === 'endgame' && nextState.winner) {
+          emitRoomEvent(
+            session.gameId,
+            GameEvents.gameEnded,
+            GameEndedSchema.parse({ winner: nextState.winner }),
+            io
+          );
+        }
+      }
+
+      broadcastGameState(session.gameId, io);
+    } catch (error) {
+      emitSocketError(socket, error instanceof Error ? error.message : 'Unable to submit vote');
+    }
+  });
+
+  socket.on(GameEvents.questSubmitted, (payload: unknown) => {
+    try {
+      const request = QuestSubmittedSchema.parse(payload);
+      const session = getSessionFromSocket(socket);
+      let nextState = submitQuestActionWithRepository(
+        session.gameId,
+        {
+          playerId: session.playerId,
+          action: request.action as QuestAction
+        },
+        repository
+      );
+
+      emitRoomEvent(session.gameId, GameEvents.questSubmitted, { playerId: session.playerId }, io);
+
+      if (Object.keys(nextState.questActions).length === nextState.proposedTeam.length) {
+        const prevPhase = nextState.phase;
+        nextState = advancePhaseWithRepository(session.gameId, repository);
+        emitRoomEvent(
+          session.gameId,
+          GameEvents.phaseChanged,
+          PhaseChangedSchema.parse({ phase: nextState.phase }),
+          io
+        );
+        if (prevPhase !== nextState.phase && nextState.phase === 'endgame' && nextState.winner) {
+          emitRoomEvent(
+            session.gameId,
+            GameEvents.gameEnded,
+            GameEndedSchema.parse({ winner: nextState.winner }),
+            io
+          );
+        }
+      }
+
+      broadcastGameState(session.gameId, io);
+    } catch (error) {
+      emitSocketError(socket, error instanceof Error ? error.message : 'Unable to submit quest action');
+    }
+  });
+
+  socket.on(GameEvents.phaseAdvanceRequest, () => {
+    try {
+      const session = getSessionFromSocket(socket);
+      const game = getGameOrThrow(session.gameId);
+      if (game.hostId !== session.playerId) {
+        throw new Error('Only the host can advance game phases manually');
+      }
+      const nextState = advancePhaseWithRepository(session.gameId, repository);
+      emitRoomEvent(
+        session.gameId,
+        GameEvents.phaseChanged,
+        PhaseChangedSchema.parse({ phase: nextState.phase }),
+        io
+      );
+      if (nextState.phase === 'endgame' && nextState.winner) {
+        emitRoomEvent(
+          session.gameId,
+          GameEvents.gameEnded,
+          GameEndedSchema.parse({ winner: nextState.winner }),
+          io
+        );
+      }
+      broadcastGameState(session.gameId, io);
+    } catch (error) {
+      emitSocketError(socket, error instanceof Error ? error.message : 'Unable to advance phase');
     }
   });
 
@@ -317,7 +535,9 @@ gameNamespace.on('connection', (socket) => {
 
     try {
       setPlayerConnected(session.gameId, session.playerId, false);
+      emitRoomEvent(session.gameId, GameEvents.playerLeft, { playerId: session.playerId }, io);
       broadcastLobbyState(session.gameId, io);
+      broadcastGameState(session.gameId, io);
     } catch {
       // no-op for stale sessions
     }
