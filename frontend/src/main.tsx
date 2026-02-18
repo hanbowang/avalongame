@@ -8,6 +8,7 @@ import {
   GameEvents,
   GameStatePayload,
   JoinGameResponse,
+  LobbyStatePayload,
   RejoinGameResponse,
   SocketNamespaces
 } from '@avalon/shared';
@@ -15,29 +16,49 @@ import './styles.css';
 
 const wsBaseUrl = import.meta.env.VITE_WS_BASE_URL ?? 'http://localhost:4000';
 const SESSION_KEY = 'avalon_session_token';
+const NICKNAME_KEY = 'avalon_nickname';
 
 type Screen = 'home' | 'join' | 'lobby';
+type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 
 function App() {
   const socketRef = React.useRef<Socket | null>(null);
   const [screen, setScreen] = React.useState<Screen>('home');
-  const [nickname, setNickname] = React.useState('');
+  const [nickname, setNickname] = React.useState(() => window.localStorage.getItem(NICKNAME_KEY) ?? '');
   const [joinCode, setJoinCode] = React.useState('');
-  const [status, setStatus] = React.useState('Connecting...');
+  const [status, setStatus] = React.useState('Connecting to game server…');
   const [error, setError] = React.useState('');
-  const [gameState, setGameState] = React.useState<GameStatePayload | null>(null);
+  const [gameState, setGameState] = React.useState<GameStatePayload | LobbyStatePayload | null>(null);
   const [isHost, setIsHost] = React.useState(false);
   const [connecting, setConnecting] = React.useState(false);
   const [connectionNonce, setConnectionNonce] = React.useState(0);
+  const [copiedCode, setCopiedCode] = React.useState(false);
+  const [connectionState, setConnectionState] = React.useState<ConnectionState>('connecting');
+
+  React.useEffect(() => {
+    window.localStorage.setItem(NICKNAME_KEY, nickname);
+  }, [nickname]);
+
+  React.useEffect(() => {
+    if (!copiedCode) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setCopiedCode(false), 1800);
+    return () => window.clearTimeout(timeout);
+  }, [copiedCode]);
 
   React.useEffect(() => {
     const socket = io(`${wsBaseUrl}${SocketNamespaces.game}`);
     socketRef.current = socket;
+    setConnectionState('connecting');
 
     socket.on(GameEvents.connectionAck, (payload: ConnectionAckPayload) => {
       setStatus(payload.message);
+      setConnectionState('connected');
       const rememberedToken = window.localStorage.getItem(SESSION_KEY);
       if (rememberedToken) {
+        setStatus('Reconnecting to your previous lobby…');
         socket.emit(GameEvents.rejoinRequest, { sessionToken: rememberedToken });
       }
     });
@@ -52,41 +73,54 @@ function App() {
     socket.on(GameEvents.createGameResponse, (payload: CreateGameResponse) => {
       window.localStorage.setItem(SESSION_KEY, payload.session.sessionToken);
       setIsHost(payload.session.isHost);
-      setGameState(null);
+      setGameState(payload.lobby);
       setScreen('lobby');
       setConnecting(false);
       setError('');
-      setStatus('Game created');
+      setStatus('Game created successfully. Invite players with your join code.');
     });
 
     socket.on(GameEvents.joinGameResponse, (payload: JoinGameResponse) => {
       window.localStorage.setItem(SESSION_KEY, payload.session.sessionToken);
       setIsHost(payload.session.isHost);
-      setGameState(null);
+      setGameState(payload.lobby);
       setScreen('lobby');
       setConnecting(false);
       setError('');
-      setStatus('Joined lobby');
+      setStatus('Joined lobby successfully. Waiting for the host to start.');
     });
 
     socket.on(GameEvents.rejoinResponse, (payload: RejoinGameResponse) => {
       window.localStorage.setItem(SESSION_KEY, payload.session.sessionToken);
       setIsHost(payload.session.isHost);
-      setGameState(null);
+      setGameState(payload.lobby);
       setScreen('lobby');
       setConnecting(false);
       setError('');
-      setStatus('Reconnected');
+      setStatus('Reconnected to your previous lobby.');
     });
 
     socket.on(GameEvents.error, (payload: GameErrorPayload) => {
       setError(payload.message);
       setConnecting(false);
+      setStatus('Something went wrong. Please review the message below.');
     });
 
     socket.on('connect_error', () => {
-      setStatus('Socket connection failed');
+      setStatus('Unable to connect to the game server. Check backend and CORS settings.');
+      setError('Could not reach game server. Try again in a moment.');
       setConnecting(false);
+      setConnectionState('disconnected');
+    });
+
+    socket.on('disconnect', () => {
+      setConnectionState('disconnected');
+      setStatus('Disconnected from game server. Reconnecting…');
+    });
+
+    socket.on('reconnect', () => {
+      setConnectionState('connected');
+      setStatus('Reconnected to game server.');
     });
 
     return () => {
@@ -94,35 +128,69 @@ function App() {
     };
   }, [connectionNonce]);
 
-  const canSubmitName = nickname.trim().length >= 2;
+  const normalizedName = nickname.trim();
+  const normalizedJoinCode = joinCode.trim().toUpperCase();
+  const canSubmitName = normalizedName.length >= 2;
+  const isValidJoinCode = normalizedJoinCode.length >= 4 && normalizedJoinCode.length <= 6;
 
   const handleCreateGame = () => {
-    if (!socketRef.current || !canSubmitName) {
+    if (!socketRef.current || !canSubmitName || connecting) {
       return;
     }
 
     setConnecting(true);
     setError('');
-    socketRef.current.emit(GameEvents.createGameRequest, { name: nickname.trim() });
+    setStatus('Creating lobby…');
+    socketRef.current.emit(GameEvents.createGameRequest, { name: normalizedName });
   };
 
   const handleJoinGame = () => {
-    if (!socketRef.current || !canSubmitName) {
+    if (!socketRef.current || !canSubmitName || !isValidJoinCode || connecting) {
       return;
     }
 
     setConnecting(true);
     setError('');
+    setStatus(`Joining lobby ${normalizedJoinCode}…`);
     socketRef.current.emit(GameEvents.joinGameRequest, {
-      name: nickname.trim(),
-      joinCode: joinCode.trim().toUpperCase()
+      name: normalizedName,
+      joinCode: normalizedJoinCode
     });
   };
 
+  const leaveLobby = () => {
+    window.localStorage.removeItem(SESSION_KEY);
+    setGameState(null);
+    setScreen('home');
+    setIsHost(false);
+    setStatus('Connecting to game server…');
+    setError('');
+    setJoinCode('');
+    setConnectionNonce((nonce) => nonce + 1);
+  };
+
+  const copyCodeToClipboard = async () => {
+    if (!gameState?.joinCode) {
+      return;
+    }
+
+    try {
+      await window.navigator.clipboard.writeText(gameState.joinCode);
+      setCopiedCode(true);
+    } catch {
+      setError('Clipboard permission denied. You can still copy the code manually.');
+    }
+  };
+
+  const playerList = React.useMemo(() => {
+    const players = gameState?.players ?? [];
+    return [...players].sort((left, right) => left.seat - right.seat);
+  }, [gameState]);
+
   const renderHome = () => (
-    <section className="card stack-lg">
-      <h1>Avalon</h1>
-      <p className="subtle">Gather friends quickly and jump into a private lobby.</p>
+    <section className="card stack-lg" aria-label="Home screen">
+      <h1>Avalon Lobby</h1>
+      <p className="subtle">Create a private room in seconds, then share the code with your group.</p>
       <label className="field">
         <span>Nickname</span>
         <input
@@ -131,22 +199,29 @@ function App() {
           value={nickname}
           placeholder="Enter your name"
           onChange={(event) => setNickname(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              handleCreateGame();
+            }
+          }}
         />
       </label>
+      {!canSubmitName ? <p className="field-help">Use at least 2 characters.</p> : null}
       <div className="stack-sm">
         <button className="btn btn-primary" onClick={handleCreateGame} disabled={!canSubmitName || connecting}>
-          Create Game
+          {connecting ? 'Creating…' : 'Create Game'}
         </button>
-        <button className="btn" onClick={() => setScreen('join')}>
-          Join Game
+        <button className="btn" onClick={() => setScreen('join')} disabled={connecting}>
+          Join Existing Game
         </button>
       </div>
     </section>
   );
 
   const renderJoin = () => (
-    <section className="card stack-lg">
+    <section className="card stack-lg" aria-label="Join screen">
       <h1>Join Lobby</h1>
+      <p className="subtle">Enter the host's join code and the nickname you want to use.</p>
       <label className="field">
         <span>Game code (4-6 characters)</span>
         <input
@@ -156,8 +231,14 @@ function App() {
           maxLength={6}
           placeholder="AB12C"
           onChange={(event) => setJoinCode(event.target.value.replace(/[^a-z0-9]/gi, '').toUpperCase())}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              handleJoinGame();
+            }
+          }}
         />
       </label>
+      {!isValidJoinCode ? <p className="field-help">Code must be 4-6 letters/numbers.</p> : null}
       <label className="field">
         <span>Nickname</span>
         <input
@@ -166,17 +247,23 @@ function App() {
           value={nickname}
           placeholder="Your name"
           onChange={(event) => setNickname(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              handleJoinGame();
+            }
+          }}
         />
       </label>
+      {!canSubmitName ? <p className="field-help">Use at least 2 characters.</p> : null}
       <div className="stack-sm">
         <button
           className="btn btn-primary"
           onClick={handleJoinGame}
-          disabled={joinCode.trim().length < 4 || joinCode.trim().length > 6 || !canSubmitName || connecting}
+          disabled={!isValidJoinCode || !canSubmitName || connecting}
         >
-          Join Lobby
+          {connecting ? 'Joining…' : 'Join Lobby'}
         </button>
-        <button className="btn" onClick={() => setScreen('home')}>
+        <button className="btn" onClick={() => setScreen('home')} disabled={connecting}>
           Back
         </button>
       </div>
@@ -184,21 +271,29 @@ function App() {
   );
 
   const renderLobby = () => (
-    <section className="card stack-lg">
+    <section className="card stack-lg" aria-label="Lobby screen">
       <div className="lobby-header">
         <h1>Lobby</h1>
-        <span className="chip">Code: {gameState?.joinCode ?? '----'}</span>
+        <div className="join-code-group">
+          <span className="chip chip-highlight">Code: {gameState?.joinCode ?? '----'}</span>
+          <button className="btn btn-inline" onClick={copyCodeToClipboard} disabled={!gameState?.joinCode}>
+            {copiedCode ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
       </div>
-      <p className="subtle">Share code with friends and wait for everyone to connect.</p>
+      <p className="subtle">Share the join code with your friends. Connected players appear live below.</p>
       <div className="chip-row">
-        <span className="chip chip-highlight">{gameState?.players.length ?? 0} players</span>
-        <span className="chip">{isHost ? 'Host controls enabled' : 'Waiting for host'}</span>
+        <span className="chip chip-highlight">{playerList.length} players</span>
+        <span className="chip">{isHost ? 'You are host' : 'Waiting for host'}</span>
         <span className="chip">Phase: {gameState?.phase ?? 'unknown'}</span>
       </div>
-      <ul className="player-list">
-        {(gameState?.players ?? []).map((player) => (
+      <ul className="player-list" aria-live="polite">
+        {playerList.map((player) => (
           <li key={player.id}>
-            <span>{player.name}</span>
+            <span>
+              {player.name}
+              {gameState?.hostId === player.id ? <strong className="host-badge">Host</strong> : null}
+            </span>
             <span className={`chip ${player.connected ? 'chip-good' : 'chip-bad'}`}>
               {player.connected ? 'Connected' : 'Disconnected'}
             </span>
@@ -209,18 +304,7 @@ function App() {
         <button className="btn btn-primary" disabled={!isHost}>
           {isHost ? 'Start Game (coming soon)' : 'Only host can start'}
         </button>
-        <button
-          className="btn"
-          onClick={() => {
-            window.localStorage.removeItem(SESSION_KEY);
-            setGameState(null);
-            setScreen('home');
-            setIsHost(false);
-            setStatus('Connecting...');
-            setError('');
-            setConnectionNonce((nonce) => nonce + 1);
-          }}
-        >
+        <button className="btn" onClick={leaveLobby}>
           Leave Lobby
         </button>
       </div>
@@ -229,8 +313,11 @@ function App() {
 
   return (
     <main className="app-shell">
-      <div className="stack-sm full-width">
-        <p className="status">{status}</p>
+      <div className="status-card stack-sm full-width" role="status" aria-live="polite">
+        <div className="connection-row">
+          <span className={`connection-dot connection-${connectionState}`} />
+          <p className="status">{status}</p>
+        </div>
         {error ? <p className="error">{error}</p> : null}
       </div>
       {screen === 'home' ? renderHome() : null}
