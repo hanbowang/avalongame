@@ -28,7 +28,8 @@ const startBackend = () => {
       CORS_ORIGIN: 'http://localhost:5173',
       SESSION_SECRET: 'smoke-test-secret'
     },
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true
   });
 
   let ready = false;
@@ -57,6 +58,32 @@ const onceEvent = (socket, event, timeoutMs = 10_000) =>
       resolve(payload);
     });
   });
+
+
+const stopBackend = async (proc) => {
+  if (proc.exitCode !== null || proc.killed) {
+    return;
+  }
+
+  try {
+    process.kill(-proc.pid, 'SIGTERM');
+  } catch {
+    return;
+  }
+
+  await Promise.race([
+    new Promise((resolve) => proc.once('exit', resolve)),
+    delay(2_000)
+  ]);
+
+  if (proc.exitCode === null) {
+    try {
+      process.kill(-proc.pid, 'SIGKILL');
+    } catch {
+      // no-op
+    }
+  }
+};
 
 const connectClient = () => {
   const socket = io(NAMESPACE_URL, {
@@ -117,7 +144,7 @@ const main = async () => {
 
     process.stdout.write(`Smoke test passed for join code ${joinCode}\n`);
   } finally {
-    proc.kill('SIGTERM');
+    await stopBackend(proc);
   }
 };
 
