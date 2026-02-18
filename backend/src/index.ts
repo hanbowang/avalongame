@@ -12,7 +12,6 @@ import {
   GameEvents,
   GamePingSchema,
   GamePongSchema,
-  GameStateSchema,
   JoinCodeSchema,
   JoinGameRequestSchema,
   JoinGameResponseSchema,
@@ -27,6 +26,7 @@ import {
 } from '@avalon/shared';
 import { config } from './config.js';
 import { InMemoryGameRepository } from './game/memoryRepository.js';
+import { toPlayerState, toPublicState } from './game/serializers.js';
 import {
   advancePhase as advancePhaseWithRepository,
   createGame as createGameWithRepository,
@@ -124,40 +124,22 @@ const toLobbyState = (game: GameState) => {
   });
 };
 
-const toGameStateSnapshot = (game: GameState) => {
-  const joinCode = getJoinCodeOrThrow(game.id);
-
-  return GameStateSchema.parse({
-    id: game.id,
-    phase: game.phase,
-    hostId: game.hostId,
-    round: game.round,
-    turn: game.turn,
-    leaderSeat: game.leaderSeat,
-    proposedTeam: game.proposedTeam,
-    votes: game.votes,
-    questActions: game.questActions,
-    voteWindowEndsAt: game.voteWindowEndsAt,
-    questWindowEndsAt: game.questWindowEndsAt,
-    failedProposalCount: game.failedProposalCount,
-    questResults: game.questResults,
-    winner: game.winner,
-    createdAt: game.createdAt,
-    updatedAt: game.updatedAt,
-    joinCode,
-    players: game.players.map((player) => ({
-      id: player.id,
-      name: player.name,
-      seat: player.seat,
-      connected: player.connected
-    }))
-  });
-};
-
 const broadcastGameState = (gameId: string, io: Server) => {
   const game = getGameOrThrow(gameId);
   const joinCode = getJoinCodeOrThrow(gameId);
-  io.of(SocketNamespaces.game).to(roomForJoinCode(joinCode)).emit(GameEvents.gameState, toGameStateSnapshot(game));
+  const namespace = io.of(SocketNamespaces.game);
+  const room = roomForJoinCode(joinCode);
+
+  namespace.to(room).emit(GameEvents.gameState, toPublicState(game, joinCode));
+
+  socketToSession.forEach((sessionToken, socketId) => {
+    const session = sessions.get(sessionToken);
+    if (!session || session.gameId !== gameId) {
+      return;
+    }
+
+    namespace.to(socketId).emit(GameEvents.gameState, toPlayerState(game, session.playerId, joinCode));
+  });
 };
 
 const broadcastLobbyState = (gameId: string, io: Server) => {
