@@ -234,6 +234,8 @@ export const submitQuestAction = (game: GameState, input: QuestActionInput): Gam
     throw new Error('Quest cards can only be submitted during quest phase');
   }
 
+  const player = findPlayer(game, input.playerId);
+
   if (game.questWindowEndsAt !== null && now() > game.questWindowEndsAt) {
     throw new Error('Quest submission window has already closed');
   }
@@ -244,6 +246,10 @@ export const submitQuestAction = (game: GameState, input: QuestActionInput): Gam
 
   if (game.questActions[input.playerId]) {
     throw new Error(`Player ${input.playerId} already submitted a quest card`);
+  }
+
+  if (player.role === 'resistance' && input.action === 'fail') {
+    throw new Error('Resistance players may only submit success');
   }
 
   return withTimestamp({

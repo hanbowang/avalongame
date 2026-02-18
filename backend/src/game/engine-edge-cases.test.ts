@@ -93,10 +93,14 @@ test('quest failures can produce spy victory and round cutoff can also force spy
   game = advancePhase(game);
   game = advancePhase(game);
 
+  const spies = game.players.filter((player) => player.role === 'spy').map((player) => player.id);
+  const resistance = game.players.filter((player) => player.role === 'resistance').map((player) => player.id);
+  assert.equal(spies.length, 2);
+
   const teamsByRound: Record<number, string[]> = {
-    1: ['host-1', 'p2'],
-    2: ['p2', 'p3', 'p4'],
-    3: ['p3', 'p4']
+    1: [spies[0] as string, resistance[0] as string],
+    2: [spies[0] as string, spies[1] as string, resistance[1] as string],
+    3: [spies[1] as string, resistance[2] as string]
   };
 
   for (let round = 1; round <= 3; round += 1) {
@@ -112,8 +116,13 @@ test('quest failures can produce spy victory and round cutoff can also force spy
 
     game = advancePhase(game);
 
-    team.forEach((playerId, index) => {
-      game = submitQuestAction(game, { playerId, action: index === 0 ? 'fail' : 'success' });
+    team.forEach((playerId) => {
+      const player = game.players.find((candidate) => candidate.id === playerId);
+      assert.ok(player);
+      game = submitQuestAction(game, {
+        playerId,
+        action: player.role === 'spy' ? 'fail' : 'success'
+      });
     });
 
     game = advancePhase(game);
