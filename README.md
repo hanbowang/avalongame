@@ -136,6 +136,8 @@ From repo root:
   - Builds shared, then type-checks backend and frontend.
 - `npm run smoke:create-join`
   - Starts backend and runs an end-to-end smoke test for create/join flow.
+- `npm run smoke:full-game-6-clients`
+  - Starts backend and runs an end-to-end six-client game through endgame.
 - `npm run test:coverage -w @avalon/backend`
   - Runs backend unit tests with c8 and prints a coverage summary.
 

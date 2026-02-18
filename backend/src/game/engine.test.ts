@@ -222,16 +222,26 @@ test('submitQuestAction rejects resistance player fail attempts', () => {
 });
 
 test('submitQuestAction allows spy players to submit fail', () => {
-  let game = setupQuestPhaseWithTeam(['host-1', 'p2']);
-  const spyOnTeam = game.proposedTeam.find((playerId) => {
-    const player = game.players.find((candidate) => candidate.id === playerId);
-    return player?.role === 'spy';
-  });
+  let roleAssignedGame = addPlayersToMinimum();
+  roleAssignedGame = advancePhase(roleAssignedGame);
+  roleAssignedGame = advancePhase(roleAssignedGame);
 
-  assert.ok(spyOnTeam);
-  game = submitQuestAction(game, { playerId: spyOnTeam, action: 'fail' });
+  const spyPlayer = roleAssignedGame.players.find((player) => player.role === 'spy');
+  assert.ok(spyPlayer);
 
-  assert.equal(game.questActions[spyOnTeam], 'fail');
+  const team = ['host-1', spyPlayer.id];
+  let game = proposeTeam(roleAssignedGame, { leaderId: 'host-1', teamPlayerIds: team });
+
+  for (const player of game.players) {
+    game = submitVote(game, { playerId: player.id, vote: 'approve' });
+  }
+
+  game = advancePhase(game);
+  assert.equal(game.phase, 'quest');
+
+  game = submitQuestAction(game, { playerId: spyPlayer.id, action: 'fail' });
+
+  assert.equal(game.questActions[spyPlayer.id], 'fail');
 });
 
 test('quest resolution tracks history and resistance wins after 3 successful quests', () => {
