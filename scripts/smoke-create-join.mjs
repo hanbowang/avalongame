@@ -110,7 +110,7 @@ const main = async () => {
   const { proc, isReady } = startBackend();
 
   proc.on('exit', (code) => {
-    if (code !== 0) {
+    if (typeof code === 'number' && code !== 0) {
       process.stderr.write(`Backend exited with code ${String(code)}\n`);
     }
   });

@@ -627,7 +627,6 @@ gameNamespace.on('connection', (socket) => {
           broadcastLobbyState(session.gameId, io);
         }
       );
-      broadcastGameState(session.gameId, io);
     } catch (error) {
       emitSocketError(socket, error instanceof Error ? error.message : 'Unable to propose team');
     }
@@ -677,7 +676,6 @@ gameNamespace.on('connection', (socket) => {
           broadcastLobbyState(session.gameId, io);
         }
       );
-      broadcastGameState(session.gameId, io);
     } catch (error) {
       emitSocketError(socket, error instanceof Error ? error.message : 'Unable to submit vote');
     }
@@ -727,7 +725,6 @@ gameNamespace.on('connection', (socket) => {
           broadcastLobbyState(session.gameId, io);
         }
       );
-      broadcastGameState(session.gameId, io);
     } catch (error) {
       emitSocketError(socket, error instanceof Error ? error.message : 'Unable to submit quest action');
     }
