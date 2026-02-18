@@ -23,6 +23,36 @@ const DEFAULT_RULES: GameRules = {
   }
 };
 
+const SPY_COUNT_BY_PLAYER_COUNT: Record<number, number> = {
+  5: 2,
+  6: 2,
+  7: 3,
+  8: 3,
+  9: 3,
+  10: 4
+};
+
+const shufflePlayers = (players: Player[]): Player[] => {
+  const shuffled = [...players];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const swapIndex = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[i]];
+  }
+  return shuffled;
+};
+
+const assignRoles = (players: Player[]): Player[] => {
+  const spyCount = SPY_COUNT_BY_PLAYER_COUNT[players.length] ?? Math.max(1, Math.floor(players.length / 3));
+
+  const shuffled = shufflePlayers(players);
+  const spyIds = new Set(shuffled.slice(0, spyCount).map((player) => player.id));
+
+  return players.map((player) => ({
+    ...player,
+    role: spyIds.has(player.id) ? 'spy' : 'resistance'
+  }));
+};
+
 const now = (): number => Date.now();
 
 const getTeamSizeForRound = (game: GameState, rules: GameRules): number => {
@@ -240,6 +270,7 @@ export const advancePhase = (game: GameState, rules: GameRules = DEFAULT_RULES):
   if (game.phase === 'role_assignment') {
     return withTimestamp({
       ...game,
+      players: assignRoles(game.players),
       phase: 'team_proposal'
     });
   }

@@ -10,6 +10,7 @@ import {
   submitQuestAction,
   submitVote
 } from './engine.js';
+import { toPlayerState } from './serializers.js';
 
 const addPlayersToMinimum = () => {
   let game = createGame({ id: 'host-1', name: 'Host' });
@@ -17,6 +18,12 @@ const addPlayersToMinimum = () => {
   game = joinGame(game, { id: 'p3', name: 'Player 3' });
   game = joinGame(game, { id: 'p4', name: 'Player 4' });
   game = joinGame(game, { id: 'p5', name: 'Player 5' });
+  return game;
+};
+
+const addPlayersToSix = () => {
+  let game = addPlayersToMinimum();
+  game = joinGame(game, { id: 'p6', name: 'Player 6' });
   return game;
 };
 
@@ -58,6 +65,35 @@ test('joinGame rejects duplicate players and full lobbies', () => {
 test('advancePhase rejects starting lobby until minimum players join', () => {
   const game = createGame({ id: 'host-1', name: 'Host' });
   assert.throws(() => advancePhase(game), /Need at least/);
+});
+
+test('role_assignment transition assigns only resistance/spy roles with correct spy count for 6 players', () => {
+  let game = addPlayersToSix();
+  game = advancePhase(game);
+  game = advancePhase(game);
+
+  assert.equal(game.phase, 'team_proposal');
+  assert.ok(game.players.every((player) => player.role !== 'unassigned'));
+
+  const spyCount = game.players.filter((player) => player.role === 'spy').length;
+  assert.equal(spyCount, 2);
+});
+
+test('toPlayerState exposes known spies only to spy players', () => {
+  let game = addPlayersToMinimum();
+  game = advancePhase(game);
+  game = advancePhase(game);
+
+  const spies = game.players.filter((player) => player.role === 'spy').map((player) => player.id);
+  assert.ok(spies.length > 0);
+
+  const spyView = toPlayerState(game, spies[0] as string, 'AB12');
+  assert.deepEqual([...spyView.privateState.knownSpies].sort(), [...spies].sort());
+
+  const resistancePlayer = game.players.find((player) => player.role === 'resistance');
+  assert.ok(resistancePlayer);
+  const resistanceView = toPlayerState(game, resistancePlayer.id, 'AB12');
+  assert.deepEqual(resistanceView.privateState.knownSpies, []);
 });
 
 test('leader can propose valid team and move to voting', () => {
@@ -202,4 +238,3 @@ test('quest resolution tracks history and resistance wins after 3 successful que
   assert.equal(game.questResults.length, 3);
   assert.equal(game.questResults[0]?.questNumber, 1);
 });
-
