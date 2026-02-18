@@ -1,5 +1,7 @@
 # Avalon Game
 
+![Coverage](https://img.shields.io/badge/backend%20coverage-99.59%25-brightgreen)
+
 A lightweight, real-time multiplayer **Avalon lobby + game-state server/client** built with a TypeScript monorepo.
 
 This project currently provides:
@@ -134,6 +136,8 @@ From repo root:
   - Builds shared, then type-checks backend and frontend.
 - `npm run smoke:create-join`
   - Starts backend and runs an end-to-end smoke test for create/join flow.
+- `npm run test:coverage -w @avalon/backend`
+  - Runs backend unit tests with c8 and prints a coverage summary.
 
 Workspace-specific examples:
 
