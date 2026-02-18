@@ -93,6 +93,15 @@ export const GameStateSchema = z.object({
   joinCode: JoinCodeSchema
 });
 
+export const PlayerPrivateStateSchema = z.object({
+  role: z.enum(['unassigned', 'resistance', 'spy']),
+  knownSpies: z.array(z.string())
+});
+
+export const PlayerGameStateSchema = GameStateSchema.extend({
+  privateState: PlayerPrivateStateSchema
+});
+
 export const SessionPayloadSchema = z.object({
   sessionToken: z.string(),
   playerId: z.string(),
@@ -170,6 +179,7 @@ export type GamePingPayload = z.infer<typeof GamePingSchema>;
 export type GamePongPayload = z.infer<typeof GamePongSchema>;
 export type LobbyStatePayload = z.infer<typeof LobbyStateSchema>;
 export type GameStatePayload = z.infer<typeof GameStateSchema>;
+export type PlayerGameStatePayload = z.infer<typeof PlayerGameStateSchema>;
 export type SessionPayload = z.infer<typeof SessionPayloadSchema>;
 export type CreateGameRequest = z.infer<typeof CreateGameRequestSchema>;
 export type CreateGameResponse = z.infer<typeof CreateGameResponseSchema>;
